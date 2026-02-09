@@ -80,27 +80,35 @@ struct RDOResult {
 
 ## 實驗結果
 
+### 測試圖片
+
+![Test Image Analysis](dummy_image_analysis.png)
+
 ### Pareto Frontier Analysis
+
+![Pareto Frontier](pareto_frontier.png)
 
 | Threshold | Time (μs) | Speedup | Accuracy | RDO Ops |
 |-----------|-----------|---------|----------|---------|
-| 0.50 | 25.96 | **4.49x** | 15.34% | 0 |
-| 0.60 | 25.17 | **4.63x** | 15.34% | 0 |
-| 0.70 | 49.67 | **2.35x** | 61.96% | 100 |
-| 0.80 | 62.24 | **1.87x** | 61.96% | 100 |
-| 0.90 | 100.50 | **1.16x** | 85.28% | 275 |
-| 0.95 | 108.29 | **1.08x** | 95.09% | 345 |
-| 1.00 | 107.38 | **1.09x** | 95.09% | 345 |
+| 0.50 | 23.92 | **4.64x** | 15.34% | 0 |
+| 0.60 | 23.29 | **4.76x** | 15.34% | 0 |
+| 0.70 | 45.75 | **2.43x** | 61.96% | 100 |
+| 0.80 | 44.92 | **2.47x** | 61.96% | 100 |
+| 0.90 | 95.50 | **1.16x** | 85.28% | 275 |
+| 0.95 | 142.25 | 0.78x | 95.09% | 345 |
+| 1.00 | 151.29 | 0.73x | 95.09% | 345 |
+| 1.01 | 156.63 | 0.71x | **100.00%** | 461 |
 
 ### 關鍵發現
 
-- **ML-Only Mode**: 4.5x 加速，但準確度僅 15%
-- **Threshold = 0.95**: 1.08x 加速，95% 準確度
-- **最佳平衡點**: Threshold = 0.8~0.9，約 **1.5-2x 加速** 與 **80%+ 準確度**
+- **ML-Only Mode**: 4.76x 加速，但準確度僅 15%
+- **Threshold = 1.01**: 100% 準確度，但比 C Model 還慢（有 ML 開銷）
+- **最佳平衡點**: Threshold = 0.7~0.8，約 **2.4x 加速** 與 **62% 準確度**
+- **高準確度選項**: Threshold = 0.9，**1.16x 加速** 與 **85% 準確度**
 
 ### 結論
 
-> "By tuning the ML confidence threshold, we achieved a **2x speedup** with only **~20% accuracy drop**. This demonstrates the trade-off decisions made in real-world encoder optimization."
+> "By tuning the ML confidence threshold, we achieved a **2.4x speedup** with **62% accuracy**, or **1.16x speedup** with **85% accuracy**. When threshold > 1.0, it falls back to pure RDO with 100% accuracy but slower due to ML overhead. This demonstrates the trade-off decisions made in real-world encoder optimization."
 
 ## ML 模型設計
 

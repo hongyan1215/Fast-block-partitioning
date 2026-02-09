@@ -371,7 +371,8 @@ int main() {
          << "\n";
     cout << "------------------------------------------------------------\n";
     
-    vector<double> thresholds = {0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0};
+    // 加入 1.01 強制 100% 使用 RDO（因為沒有 confidence > 1.0）
+    vector<double> thresholds = {0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0, 1.01};
     
     // 儲存 Pareto 數據
     ofstream pareto_file("pareto_data.csv");

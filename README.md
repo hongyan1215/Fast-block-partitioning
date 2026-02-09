@@ -27,12 +27,14 @@ else:
 
 ```
 Fast Block Partitioning/
-├── ground_truth.cpp       # Phase 1: Ground Truth 資料生成
+├── ground_truth.cpp       # Phase 1: Ground Truth 資料生成（基於 RDO 決策）
 ├── train_and_convert.py   # Phase 2: ML 模型訓練 & C++ 轉譯
 ├── main_hybrid.cpp        # Phase 3: Benchmark & Pareto 分析
+├── run_benchmark.py       # 多次測試並計算平均值（3 次）
 ├── ml_model_generated.h   # 自動生成的 ML 模型 C++ 程式碼
 ├── block_data.csv         # 訓練資料集
-├── pareto_data.csv        # Pareto Frontier 數據
+├── pareto_data.csv        # Pareto Frontier 數據（平均值）
+├── docs/專案說明.md       # 中文技術文件
 └── README.md
 ```
 
@@ -98,27 +100,39 @@ struct RDOResult {
 
 ![Pareto Frontier](pareto_frontier.png)
 
+> **測試說明**: 以下結果為 **3 次獨立執行的平均值**，C Model baseline 約 47.6 μs
+
 | Threshold | Time (μs) | Speedup | Accuracy | RDO Ops |
 |-----------|-----------|---------|----------|---------|
-| 0.50 | 23.92 | **4.64x** | 15.34% | 0 |
-| 0.60 | 23.29 | **4.76x** | 15.34% | 0 |
-| 0.70 | 45.75 | **2.43x** | 61.96% | 100 |
-| 0.80 | 44.92 | **2.47x** | 61.96% | 100 |
-| 0.90 | 95.50 | **1.16x** | 85.28% | 275 |
-| 0.95 | 142.25 | 0.78x | 95.09% | 345 |
-| 1.00 | 151.29 | 0.73x | 95.09% | 345 |
-| 1.01 | 156.63 | 0.71x | **100.00%** | 461 |
+| 0.50 | 8.63 | **5.51x** ± 0.22 | 15.34% | 0 |
+| 0.60 | 17.52 | **4.20x** ± 1.94 | 15.34% | 0 |
+| 0.70 | 16.89 | **2.84x** ± 0.15 | 61.96% | 100 |
+| 0.80 | 17.52 | **2.75x** ± 0.33 | 61.96% | 100 |
+| 0.90 | 39.82 | **1.19x** ± 0.00 | 85.28% | 275 |
+| 0.95 | 43.58 | 1.11x ± 0.10 | 95.09% | 345 |
+| 1.00 | 38.47 | 1.24x ± 0.13 | 95.09% | 345 |
+| 1.01 | 56.64 | 0.84x ± 0.08 | **100.00%** | 461 |
 
 ### 關鍵發現
 
-- **ML-Only Mode**: 4.76x 加速，但準確度僅 15%
-- **Threshold = 1.01**: 100% 準確度，但比 C Model 還慢（有 ML 開銷）
-- **最佳平衡點**: Threshold = 0.7~0.8，約 **2.4x 加速** 與 **62% 準確度**
-- **高準確度選項**: Threshold = 0.9，**1.16x 加速** 與 **85% 準確度**
+- **ML-Only Mode (θ=0.5)**: 約 **5.5x 加速**，但準確度僅 15%
+- **Threshold = 1.01**: 100% 準確度，但比 C Model 慢（約 **0.84x**），因為 ML 額外開銷
+- **最佳平衡點 (θ=0.7~0.8)**: 約 **2.8x 加速** 與 **62% 準確度**
+- **高準確度選項 (θ=0.9)**: 約 **1.2x 加速** 與 **85% 準確度**
+
+### 測試流程
+
+```bash
+# 1. 編譯
+g++ -O2 -std=c++11 -o main_hybrid main_hybrid.cpp
+
+# 2. 多次測試取平均
+python run_benchmark.py   # 自動執行 3 次並生成平均結果
+```
 
 ### 結論
 
-> "By tuning the ML confidence threshold, we achieved a **2.4x speedup** with **62% accuracy**, or **1.16x speedup** with **85% accuracy**. When threshold > 1.0, it falls back to pure RDO with 100% accuracy but slower due to ML overhead. This demonstrates the trade-off decisions made in real-world encoder optimization."
+> "Based on 3 independent runs, we achieved a **~2.8x speedup** with **62% accuracy** (θ=0.7~0.8), or **~1.2x speedup** with **85% accuracy** (θ=0.9). When threshold > 1.0, all decisions fall back to RDO with 100% accuracy but ~0.84x slower due to ML overhead. This demonstrates the trade-off decisions made in real-world encoder optimization."
 
 ## ML 模型設計
 

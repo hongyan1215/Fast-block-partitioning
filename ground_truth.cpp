@@ -9,7 +9,7 @@ using namespace std;
 // --- 設定參數 ---
 const int IMG_SIZE = 64;       // 圖片大小 (64x64)
 const int MIN_BLOCK_SIZE = 4;  // 最小切分單位
-const double SPLIT_THRESHOLD = 20.0; // 變異數閾值 (大於此值就切)
+const double LAMBDA = 0.5;     // RDO 的 Lagrangian multiplier
 
 // --- 資料結構：用來存給 Python 訓練的資料 ---
 struct TrainingData {
@@ -17,12 +17,11 @@ struct TrainingData {
     double grad_h; // 水平梯度強度
     double grad_v; // 垂直梯度強度
     int size;
-    int should_split; // Label: 1 = 切, 0 = 不切
+    int should_split; // Label: 1 = 切, 0 = 不切 (由 RDO 決定！)
 };
 
 vector<TrainingData> dataset;
 
-// --- 輔助函數：生成一張測試用的灰階圖 ---
 // 這裡產生一個簡單的圖案：左上角全黑，右下角全白，中間有漸層 (高頻區)
 vector<vector<int>> generate_dummy_image(int size) {
     vector<vector<int>> img(size, vector<int>(size));
@@ -41,8 +40,7 @@ vector<vector<int>> generate_dummy_image(int size) {
     return img;
 }
 
-// --- 核心數學：計算區塊內的變異數 (Variance) ---
-// 這是 "Heavy C Model" 模擬的部分，計算量較大
+// --- 核心數學：計算以x,y為左上角，size邊長區塊內的變異數 (Variance) ---
 double compute_variance(const vector<vector<int>>& img, int x, int y, int size) {
     double sum = 0.0;
     double sq_sum = 0.0;
@@ -62,7 +60,6 @@ double compute_variance(const vector<vector<int>>& img, int x, int y, int size) 
 }
 
 // --- 核心數學：計算簡單的梯度 (Gradient) ---
-// 用於 Phase 2 的 Feature
 void compute_gradients(const vector<vector<int>>& img, int x, int y, int size, double& grad_h, double& grad_v) {
     grad_h = 0.0;
     grad_v = 0.0;
@@ -73,37 +70,119 @@ void compute_gradients(const vector<vector<int>>& img, int x, int y, int size, d
             if (i + 1 < size) grad_v += abs(img[y + i][x + j] - img[y + i + 1][x + j]);
         }
     }
-    // 正規化一下，避免 size 影響太大
+    // 正規化避免 size 影響
     grad_h /= (size * size);
     grad_v /= (size * size);
 }
 
-// --- 遞迴邏輯：Quadtree Partitioning ---
+// ============================================================
+// RDO 計算函數 (真正的 Ground Truth 決策邏輯)
+// ============================================================
+
+// 計算區塊的平均值（作為預測值）
+double compute_mean(const vector<vector<int>>& img, int x, int y, int size) {
+    double sum = 0.0;
+    for (int i = 0; i < size; ++i) {
+        for (int j = 0; j < size; ++j) {
+            sum += img[y + i][x + j];
+        }
+    }
+    return sum / (size * size);
+}
+
+// 計算 SSD (Sum of Squared Differences) - Distortion
+double compute_SSD(const vector<vector<int>>& img, int x, int y, int size, double pred_value) {
+    double ssd = 0.0;
+    for (int i = 0; i < size; ++i) {
+        for (int j = 0; j < size; ++j) {
+            double diff = img[y + i][x + j] - pred_value;
+            ssd += diff * diff;
+        }
+    }
+    return ssd;
+}
+
+// 估算編碼所需的 bits (Rate)
+double estimate_rate(double variance, int size) {
+    double base_rate = log2(variance + 1.0) * size;
+    double overhead = 2.0;
+    return base_rate + overhead;
+}
+
+// RDO Result 結構
+struct RDOResult {
+    double cost;
+    bool should_split;
+};
+
+// 前向宣告
+double compute_split_cost(const vector<vector<int>>& img, int x, int y, int size);
+
+// 計算不切分的 RD Cost
+double compute_no_split_cost(const vector<vector<int>>& img, int x, int y, int size) {
+    double pred = compute_mean(img, x, y, size);
+    double distortion = compute_SSD(img, x, y, size, pred);
+    double variance = compute_variance(img, x, y, size);
+    double rate = estimate_rate(variance, size);
+    return distortion + LAMBDA * rate;
+}
+
+// RDO 決策：比較切分 vs 不切分的 Cost
+RDOResult rdo_decision(const vector<vector<int>>& img, int x, int y, int size) {
+    double no_split_cost = compute_no_split_cost(img, x, y, size);
+    
+    if (size <= MIN_BLOCK_SIZE) {
+        return {no_split_cost, false};
+    }
+    
+    double split_cost = compute_split_cost(img, x, y, size);
+    
+    if (split_cost < no_split_cost) {
+        return {split_cost, true};
+    } else {
+        return {no_split_cost, false};
+    }
+}
+
+// 計算切分後四個子區塊的總 Cost
+double compute_split_cost(const vector<vector<int>>& img, int x, int y, int size) {
+    int half = size / 2;
+    double total_cost = 0.0;
+    
+    total_cost += rdo_decision(img, x, y, half).cost;
+    total_cost += rdo_decision(img, x + half, y, half).cost;
+    total_cost += rdo_decision(img, x, y + half, half).cost;
+    total_cost += rdo_decision(img, x + half, y + half, half).cost;
+    
+    total_cost += 1.0;  // 分割標誌的 bits
+    
+    return total_cost;
+}
+
+// ============================================================
+// 遞迴收集訓練資料（用 RDO 決策作為 Ground Truth）
+// ============================================================
+
 void recursive_partition(const vector<vector<int>>& img, int x, int y, int size) {
-    // 1. 計算特徵 (Features)
+    // 1. 計算特徵 (Features) - 這些是 ML 的輸入
     double var = compute_variance(img, x, y, size);
     double gh, gv;
     compute_gradients(img, x, y, size, gh, gv);
 
-    // 2. 判斷是否需要切分 (Logic)
-    bool should_split = (var > SPLIT_THRESHOLD) && (size > MIN_BLOCK_SIZE);
+    // 2. 用 RDO 決定是否切分 (這是 Ground Truth！)
+    RDOResult rdo = rdo_decision(img, x, y, size);
+    bool should_split = rdo.should_split;
 
-    // 3. 收集數據 (蒐集 Ground Truth)
-    // 注意：我們只紀錄「當下這個 block」的決策，這就是 Python 要學的
+    // 3. 收集數據：特徵 + RDO 決策結果
     dataset.push_back({var, gh, gv, size, should_split ? 1 : 0});
 
-    // 4. 執行動作
+    // 4. 根據 RDO 決策執行動作
     if (should_split) {
         int half = size / 2;
-        // 遞迴呼叫四個子區塊
-        recursive_partition(img, x, y, half);             // Top-Left
-        recursive_partition(img, x + half, y, half);      // Top-Right
-        recursive_partition(img, x, y + half, half);      // Bottom-Left
-        recursive_partition(img, x + half, y + half, half); // Bottom-Right
-    } else {
-        // Leaf Node: 這裡就是最終編碼的 block
-        // 在真實 Encoder 這裡會進行 DCT/Quantization
-        // std::cout << "Leaf Block at (" << x << "," << y << ") size: " << size << "\n";
+        recursive_partition(img, x, y, half);
+        recursive_partition(img, x + half, y, half);
+        recursive_partition(img, x, y + half, half);
+        recursive_partition(img, x + half, y + half, half);
     }
 }
 
@@ -126,15 +205,17 @@ int main() {
     // 1. 準備圖片
     auto img = generate_dummy_image(IMG_SIZE);
     
-    cout << "Start Ground Truth Generation (C Model)...\n";
+    cout << "=== Ground Truth Generation (RDO-based) ===\n";
+    cout << "Image size: " << IMG_SIZE << "x" << IMG_SIZE << "\n";
+    cout << "Lambda (RDO): " << LAMBDA << "\n";
+    cout << "Min block size: " << MIN_BLOCK_SIZE << "\n\n";
 
-    // 2. 執行暴力分割 (Ground Truth Generation)
-    // 從整張圖開始切 (0, 0, 64)
+    // 2. 執行 RDO 分割 (Ground Truth Generation)
     recursive_partition(img, 0, 0, IMG_SIZE);
 
     // 3. 匯出訓練資料
     export_csv("block_data.csv");
 
-    cout << "Phase 1 Complete. Ready for Python training.\n";
+    cout << "\nPhase 1 Complete. Ground Truth generated using RDO decisions.\n";
     return 0;
 }

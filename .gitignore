@@ -1,1 +1,6 @@
-docs/
+# Python virtual environment
+.venv/
+
+# Compiled binaries
+ground_truth
+main_hybrid

@@ -84,6 +84,16 @@ struct RDOResult {
 
 ![Test Image Analysis](dummy_image_analysis.png)
 
+### 不同 Threshold 的分割結果視覺化
+
+![Partition Comparison](partition_comparison.png)
+
+**圖例：** 🔴 64×64 | 🩵 32×32 | 🔵 16×16 | 🟢 8×8 | 🟡 4×4
+
+### ML-Only vs C Model vs Hybrid
+
+![ML vs C Comparison](partition_ml_vs_c.png)
+
 ### Pareto Frontier Analysis
 
 ![Pareto Frontier](pareto_frontier.png)
